@@ -1,0 +1,1 @@
+C:\Users\emman\AppData\Local\Temp\kconfgen_tmp2h1wevb7:5: warning: '1' is not a valid value for the bool symbol TINYUSB_CDC_ENABLED (defined at C:/Users/emman/Projects/FootController_X6/firmware/managed_components/espressif__esp_tinyusb/Kconfig:191). Assignment ignored.

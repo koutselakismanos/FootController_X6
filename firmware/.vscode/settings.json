@@ -1,0 +1,16 @@
+{
+    "C_Cpp.intelliSenseEngine": "default",
+    "idf.espIdfPathWin": "C:\\Users\\emman\\esp\\v5.4\\esp-idf",
+    "idf.openOcdConfigs": [
+        "board/esp32s3-builtin.cfg"
+    ],
+    "idf.portWin": "COM4",
+    "idf.toolsPathWin": "C:\\Users\\emman\\.espressif",
+    "idf.flashType": "UART",
+    "files.associations": {
+        "tinyusb.h": "c",
+        "tinyusb_types.h": "c",
+        "hid_device.h": "c",
+        "usbd.h": "c"
+    }
+}
