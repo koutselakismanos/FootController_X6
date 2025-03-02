@@ -11,6 +11,12 @@
         "tinyusb.h": "c",
         "tinyusb_types.h": "c",
         "hid_device.h": "c",
-        "usbd.h": "c"
+        "usbd.h": "c",
+        "tusb_cdc_acm.h": "c",
+        "midi_device.h": "c",
+        "gpio.h": "c",
+        "tusb_console.h": "c",
+        "i2c_master.h": "c",
+        "i2c_types.h": "c"
     }
 }
