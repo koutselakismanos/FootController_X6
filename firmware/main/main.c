@@ -22,12 +22,9 @@
 #include <esp_err.h>
 
 #include "tusb320.h"
-
-#include "meow_gpio.c"
+#include "gpio_config.c"
 
 static const char *TAG = "Main";
-
-#define APP_BUTTON (GPIO_NUM_0) // Use BOOT signal by default
 
 /************* I2C ****************/
 #define I2C_MASTER_SCL_IO GPIO_NUM_17
@@ -236,17 +233,18 @@ void i2c_master_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_handle_
     ESP_ERROR_CHECK(i2c_master_bus_add_device(*bus_handle, &dev_cfg, dev_handle));
 }
 
+
 void app_main() {
     // setup_usb();
 
-    i2c_master_bus_handle_t bus_handle;
-    i2c_master_dev_handle_t dev_handle;
-    i2c_master_init(&bus_handle, &dev_handle);
-    ESP_LOGI(TAG, "I2C initialized successfully");
-    setup_gpios();
+    // i2c_master_bus_handle_t bus_handle;
+    // i2c_master_dev_handle_t dev_handle;
+    // i2c_master_init(&bus_handle, &dev_handle);
+    // ESP_LOGI(TAG, "I2C initialized successfully");
+    ESP_ERROR_CHECK(configure_gpios());
 
-    static int count = 0;
-    while (true) {
+    // static int count = 0;
+    // while (true) {
         // if (tud_mounted())
         // {
         // if (tud_midi_available())
@@ -255,8 +253,8 @@ void app_main() {
         //     tud_midi_packet_read(packet);
         //     ESP_LOGI(TAG, "%d %d %d %d", packet[0], packet[1], packet[2], packet[3]);
         // }
-        static bool send_hid_data = false;
-        if (send_hid_data) {
+        // static bool send_hid_data = false;
+        // if (send_hid_data) {
             // const uint8_t data_length = 1;
             // uint8_t data[data_length];
             // uint8_t reg_addr = REG_09;
@@ -289,8 +287,9 @@ void app_main() {
             //     ESP_LOGI(TAG, "tuner on");
             // }
             // count++;
-        }
-        send_hid_data = !gpio_get_level(APP_BUTTON);
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
+        // }
+        // send_hid_data = !gpio_get_level(APP_BUTTON);
+        // vTaskDelay(pdMS_TO_TICKS(100));
+    // }
+    // xTaskCreate(&hello_task, "hello_task", 2048, NULL, 5, NULL);
 }

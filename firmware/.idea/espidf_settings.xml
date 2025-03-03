@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ESP-IDF_SETTINGS">
-    <option name="monitorBaud" value="Auto" />
+    <option name="monitorBaud" value="115200" />
     <option name="port" value="COM4" />
-    <option name="uploadBaud" value="Auto" />
+    <option name="uploadBaud" value="115200" />
   </component>
 </project>
