@@ -15,7 +15,10 @@
 #define FOOTSWITCH_5 GPIO_NUM_47
 #define FOOTSWITCH_6 GPIO_NUM_48
 
-const gpio_num_t footswitches[] = {
+#define DEBOUNCE_TIME_MS 1
+#define HOLD_TIME_MS 1000
+
+static const gpio_num_t footswitches[] = {
     FOOTSWITCH_1,
     FOOTSWITCH_2,
     FOOTSWITCH_3,
@@ -24,6 +27,19 @@ const gpio_num_t footswitches[] = {
     FOOTSWITCH_6
 };
 
+
+typedef struct {
+    gpio_num_t gpio;                 // GPIO pin number
+    bool debounced_state;            // True if pressed (active low), false otherwise
+    uint32_t press_start_tick;       // Tick count when button was pressed
+    uint32_t last_transition_tick;   // Tick count of the last valid state transition
+    volatile bool hold_triggered;    // Hold event triggered flag
+    TimerHandle_t hold_timer;        // Timer for hold detection
+
+} gpio_state_t;
+
+
+static gpio_state_t gpio_states[7];
 static QueueHandle_t gpio_evt_queue = NULL;
 
 static void gpio_task_example(void *arg) {
@@ -33,18 +49,48 @@ static void gpio_task_example(void *arg) {
             continue;
         }
 
-        ESP_LOGI("gpio_task_exampke", "GPIO[%"PRIu32"] intr, val: %d", gpio_num, gpio_get_level(gpio_num));
+        ESP_LOGI(
+            "gpio_task_exampke",
+            "GPIO[%"PRIu32"] intr, val: %d, last_transition_tick: %d",
+            gpio_num,
+            gpio_states[gpio_num].debounced_state,
+            gpio_states[gpio_num].last_transition_tick
+        );
     }
 }
 
 static void IRAM_ATTR gpio_isr_handler(void *arg) {
-    const uint32_t gpio_num = (uint32_t)arg;
-    xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
+    const uint32_t gpio_pin = (uint32_t)arg;
+    const TickType_t current_tick = xTaskGetTickCountFromISR();
+    gpio_state_t *state = &gpio_states[gpio_pin];
+
+    // Read current level (active low: 0 means pressed)
+    const int level = gpio_get_level(gpio_pin);
+    const bool new_state = (level == 0);
+
+    // Process only if the state is changing
+    if (new_state != state->debounced_state) {
+        // Check if enough time has passed for debouncing
+        if ((current_tick - state->last_transition_tick) < pdMS_TO_TICKS(DEBOUNCE_TIME_MS)) {
+            return;
+        }
+        // Update state and record the transition time
+        state->debounced_state = new_state;
+        state->last_transition_tick = current_tick;
+
+        if (new_state) {
+            // Button pressed: record press start tick
+            state->press_start_tick = current_tick;
+        }
+
+        // Notify the task about the state change
+        xQueueSendFromISR(gpio_evt_queue, &gpio_pin, NULL);
+    }
 }
 
-esp_err_t setup_footswitch_config(int8_t footswitch_num) {
+esp_err_t setup_footswitch_config(int8_t gpio_num) {
     const gpio_config_t footswitch_config = {
-        .pin_bit_mask = BIT64(footswitch_num),
+        .pin_bit_mask = BIT64(gpio_num),
         .mode = GPIO_MODE_INPUT,
         .intr_type = GPIO_INTR_ANYEDGE,
         .pull_up_en = GPIO_PULLUP_ENABLE,
@@ -53,9 +99,8 @@ esp_err_t setup_footswitch_config(int8_t footswitch_num) {
     return gpio_config(&footswitch_config);
 }
 
-
 esp_err_t initialize_gpio_interrupts() {
-    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+    gpio_evt_queue = xQueueCreate(100, sizeof(uint32_t));
     if (gpio_evt_queue == 0) {
         ESP_LOGE("initialize_gpio_interrupts", "Failed to create queue.");
         return ESP_FAIL;
@@ -69,14 +114,22 @@ esp_err_t initialize_gpio_interrupts() {
     }
 
 
-    ESP_RETURN_ON_ERROR(gpio_install_isr_service(ESP_INTR_FLAG_EDGE), "initialize_gpio_interrupts", "initialize_gpio_interrupts");
-    ESP_RETURN_ON_ERROR(gpio_isr_handler_add(BOOT_BUTTON, gpio_isr_handler, BOOT_BUTTON), "initialize_gpio_interrupts", "initialize_gpio_interrupts");
+    ESP_RETURN_ON_ERROR(
+        gpio_install_isr_service(ESP_INTR_FLAG_EDGE),
+        "initialize_gpio_interrupts",
+        "initialize_gpio_interrupts"
+    );
+    ESP_RETURN_ON_ERROR(
+        gpio_isr_handler_add(BOOT_BUTTON, gpio_isr_handler, 0),
+        "initialize_gpio_interrupts",
+        "initialize_gpio_interrupts"
+    );
     for (int i = 0; i < sizeof(footswitches) / sizeof(footswitches[0]); i++) {
         ESP_RETURN_ON_ERROR(
             gpio_isr_handler_add(footswitches[i], gpio_isr_handler, (void *)(i + 1)),
             "initialize_gpio_interrupts",
             "isr_handler_add failed on footswitch-%d",
-            i+1
+            i + 1
         );
     }
 
@@ -93,15 +146,6 @@ esp_err_t configure_gpios(void) {
     };
     esp_err_t ret = gpio_config(&boot_button_config);
     ESP_RETURN_ON_ERROR(ret, "configure_gpios", "Boot button config failed");
-
-    const gpio_num_t footswitches[] = {
-        FOOTSWITCH_1,
-        FOOTSWITCH_2,
-        FOOTSWITCH_3,
-        FOOTSWITCH_4,
-        FOOTSWITCH_5,
-        FOOTSWITCH_6
-    };
 
     for (int i = 0; i < sizeof(footswitches) / sizeof(footswitches[0]); i++) {
         ret = setup_footswitch_config(footswitches[i]);
