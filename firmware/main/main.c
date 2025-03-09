@@ -24,7 +24,7 @@
 #include "tusb320.h"
 #include "gpio_config.c"
 
-static const char *TAG = "Main";
+static const char* TAG = "Main";
 
 /************* I2C ****************/
 #define I2C_MASTER_SCL_IO GPIO_NUM_17
@@ -38,7 +38,7 @@ static const char *TAG = "Main";
 /************* TinyUSB descriptors ****************/
 
 enum {
-    ITF_NUM_CDC  = 0,
+    ITF_NUM_CDC = 0,
     ITF_NUM_MIDI = 2,
 };
 
@@ -55,7 +55,7 @@ enum {
 /**
  * @brief String descriptor
  */
-const char *string_descriptor[] = {
+const char* string_descriptor[] = {
     // array of pointer to string descriptors
     (char[]){0x09, 0x04},
     // 0: is supported language is English (0x0409)
@@ -159,7 +159,7 @@ static const uint8_t configuration_descriptor[] = {
 //     }
 // }
 
-void setup_usb() {
+esp_err_t setup_usb() {
     ESP_LOGI(TAG, "USB Initialization");
     const tinyusb_config_t tusb_cfg = {
         .device_descriptor = NULL,
@@ -169,7 +169,7 @@ void setup_usb() {
         .configuration_descriptor = configuration_descriptor,
     };
 
-    ESP_ERROR_CHECK(tinyusb_driver_install(&tusb_cfg));
+    ESP_RETURN_ON_ERROR(tinyusb_driver_install(&tusb_cfg), "setup_usb", "tusb_driver_install");
 
     // Set up CDC for serial output
     // esp_tusb_init_console(ITF_NUM_CDC); // Redirects printf() to CDC
@@ -186,33 +186,14 @@ void setup_usb() {
     // };
 
     const tinyusb_config_cdcacm_t acm_cfg = {0};
-    ESP_ERROR_CHECK(tusb_cdc_acm_init(&acm_cfg));
-    ESP_ERROR_CHECK(esp_tusb_init_console(TINYUSB_CDC_ACM_0)); // log to usb
+    ESP_RETURN_ON_ERROR(tusb_cdc_acm_init(&acm_cfg), "setup usb", "tusb_cdc_acm_init");
+    ESP_RETURN_ON_ERROR(esp_tusb_init_console(TINYUSB_CDC_ACM_0), "setup usb", "esp_tusb_init_console"); // log to usb;
 
     ESP_LOGI(TAG, "USB Initialized");
+    return ESP_OK;
 }
 
-/**
- * @brief Read a sequence of bytes from a TUSB320 registers
- */
-static esp_err_t tusb320_register_read(
-    i2c_master_dev_handle_t dev_handle,
-    const uint8_t reg_addr,
-    uint8_t *data,
-    const size_t len
-) {
-    return i2c_master_transmit_receive(dev_handle, &reg_addr, 1, data, len, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
-}
-
-/**
- * @brief Write a byte to a TUSB320 sensor register
- */
-static esp_err_t tusb320_register_write_byte(i2c_master_dev_handle_t dev_handle, const uint8_t reg_addr, const uint8_t data) {
-    const uint8_t write_buf[2] = {reg_addr, data};
-    return i2c_master_transmit(dev_handle, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
-}
-
-void i2c_master_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_handle_t *dev_handle) {
+void i2c_master_init(i2c_master_bus_handle_t* bus_handle, i2c_master_dev_handle_t* dev_handle) {
     const i2c_master_bus_config_t bus_config = {
         .i2c_port = I2C_NUM_0,
         .sda_io_num = I2C_MASTER_SDA_IO,
@@ -233,9 +214,20 @@ void i2c_master_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_handle_
     ESP_ERROR_CHECK(i2c_master_bus_add_device(*bus_handle, &dev_cfg, dev_handle));
 }
 
+static void midi_test_sender_task(void* arg) {
+    while (true) {
+        const uint8_t channel = 1;
+        uint8_t packet[4];
+        packet[0] = 0xB0;
+        packet[1] = packet[0] | channel;
+        tud_midi_packet_write((uint8_t[]){0x0B, 0xB0, 0x39, 0x35});
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
 
 void app_main() {
-    // setup_usb();
+    ESP_ERROR_CHECK(setup_usb());
 
     // i2c_master_bus_handle_t bus_handle;
     // i2c_master_dev_handle_t dev_handle;
@@ -245,51 +237,58 @@ void app_main() {
 
     // static int count = 0;
     // while (true) {
-        // if (tud_mounted())
-        // {
-        // if (tud_midi_available())
-        // {
-        //     uint8_t packet[4];
-        //     tud_midi_packet_read(packet);
-        //     ESP_LOGI(TAG, "%d %d %d %d", packet[0], packet[1], packet[2], packet[3]);
-        // }
-        // static bool send_hid_data = false;
-        // if (send_hid_data) {
-            // const uint8_t data_length = 1;
-            // uint8_t data[data_length];
-            // uint8_t reg_addr = REG_09;
-            //
-            // ESP_ERROR_CHECK_WITHOUT_ABORT(
-            //     i2c_master_transmit_receive(dev_handle, &reg_addr, 1, data, data_length,
-            //         I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS)
-            // );
-            //
-            // reg09_state_t reg09_state;
-            // reg09_state.attached_state = data[0] & ATTACHED_STATE_MASK;
-            // reg09_state.cable_dir = data[0] & CABLE_DIR_MASK;
-            // reg09_state.interrupt_status = data[0] & INTERRUPT_STATUS_MASK;
-            // reg09_state.drp_duty_cycle = data[0] & DRP_DUTY_CYCLE_MASK;
-            //
-            // printf("reg09_state.attached_state = %d\n", reg09_state.attached_state);
-            // printf("reg09_state.cable_dir= %d\n", reg09_state.cable_dir);
-
-            // ----------------------------------------
-            // const uint8_t channel = 1;
-            // uint8_t packet[4];
-            // packet[0] = 0xB0;
-            // packet[1] = packet[0] | channel;
-            //
-            // if (count % 2 == 0) {
-            //     tud_midi_packet_write((uint8_t[]){0x0B, 0xB0, 0x39, 0x35});
-            //     ESP_LOGI(TAG, "tunner off");
-            // } else {
-            //     tud_midi_packet_write((uint8_t[]){0x0B, 0xB0, 0x39, 0x72});
-            //     ESP_LOGI(TAG, "tuner on");
-            // }
-            // count++;
-        // }
-        // send_hid_data = !gpio_get_level(APP_BUTTON);
-        // vTaskDelay(pdMS_TO_TICKS(100));
+    //     // if (tud_mounted())
+    //     // {
+    //     // if (tud_midi_available())
+    //     // {
+    //     //     uint8_t packet[4];
+    //     //     tud_midi_packet_read(packet);
+    //     //     ESP_LOGI(TAG, "%d %d %d %d", packet[0], packet[1], packet[2], packet[3]);
+    //     // }
+    //     // static bool send_hid_data = false;
+    //     // if (send_hid_data) {
+    //     // const uint8_t data_length = 1;
+    //     // uint8_t data[data_length];
+    //     // uint8_t reg_addr = REG_09;
+    //     //
+    //     // ESP_ERROR_CHECK_WITHOUT_ABORT(
+    //     //     i2c_master_transmit_receive(dev_handle, &reg_addr, 1, data, data_length,
+    //     //         I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS)
+    //     // );
+    //     //
+    //     // reg09_state_t reg09_state;
+    //     // reg09_state.attached_state = data[0] & ATTACHED_STATE_MASK;
+    //     // reg09_state.cable_dir = data[0] & CABLE_DIR_MASK;
+    //     // reg09_state.interrupt_status = data[0] & INTERRUPT_STATUS_MASK;
+    //     // reg09_state.drp_duty_cycle = data[0] & DRP_DUTY_CYCLE_MASK;
+    //     //
+    //     // printf("reg09_state.attached_state = %d\n", reg09_state.attached_state);
+    //     // printf("reg09_state.cable_dir= %d\n", reg09_state.cable_dir);
+    //
+    //     // ----------------------------------------
+    //     const uint8_t channel = 1;
+    //     uint8_t packet[4];
+    //     packet[0] = 0xB0;
+    //     packet[1] = packet[0] | channel;
+    //     tud_midi_packet_write((uint8_t[]){0x0B, 0xB0, 0x39, 0x35});
+    //     //
+    //     // if (count % 2 == 0) {
+    //     tud_midi_packet_write((uint8_t[]){0x0B, 0xB0, 0x39, 0x35});
+    //     //     ESP_LOGI(TAG, "tunner off");
+    //     // } else {
+    //     //     tud_midi_packet_write((uint8_t[]){0x0B, 0xB0, 0x39, 0x72});
+    //     //     ESP_LOGI(TAG, "tuner on");
+    //     // }
+    //     // count++;
+    //     // }
+    //     // send_hid_data = !gpio_get_level(APP_BUTTON);
+    //     vTaskDelay(pdMS_TO_TICKS(100));
     // }
-    // xTaskCreate(&hello_task, "hello_task", 2048, NULL, 5, NULL);
+
+
+    // const BaseType_t xReturned = xTaskCreate(midi_test_sender_task, "midi_test_sender_task", 2048, NULL, 5, NULL);
+    // if (xReturned != pdPASS) {
+    //     // Task creation failed. Log the error and return a custom error code
+    //     ESP_LOGE("xTaskCreate", "Failed to create task. Error code: 0x%X", xReturned);
+    // }
 }

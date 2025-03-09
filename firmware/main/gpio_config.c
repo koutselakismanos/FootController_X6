@@ -1,4 +1,5 @@
 #include <esp_check.h>
+#include "class/midi/midi_device.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -7,6 +8,12 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 
+
+#define DEBOUNCE_TIME_MS 1
+#define HOLD_TIME_MS 1000
+
+#define MIDI_CHANNEL 0
+
 #define BOOT_BUTTON GPIO_NUM_0
 #define FOOTSWITCH_1 GPIO_NUM_4
 #define FOOTSWITCH_2 GPIO_NUM_5
@@ -14,9 +21,6 @@
 #define FOOTSWITCH_4 GPIO_NUM_38
 #define FOOTSWITCH_5 GPIO_NUM_47
 #define FOOTSWITCH_6 GPIO_NUM_48
-
-#define DEBOUNCE_TIME_MS 1
-#define HOLD_TIME_MS 1000
 
 static const gpio_num_t footswitches[] = {
     FOOTSWITCH_1,
@@ -27,22 +31,56 @@ static const gpio_num_t footswitches[] = {
     FOOTSWITCH_6
 };
 
+typedef struct {
+    gpio_num_t gpio;
+    uint8_t cc_number;
+    uint8_t cc_value;
+} footswitch_config_t;
+
+// Array of footswitch configurations
+static const footswitch_config_t footswitches_config[] = {
+    {BOOT_BUTTON, 48, 64},
+    {FOOTSWITCH_1, 63, 127},
+    {FOOTSWITCH_2, 57, 65},
+    {FOOTSWITCH_3, 22, 127},
+    {FOOTSWITCH_4, 23, 127},
+    {FOOTSWITCH_5, 22, 127},
+    {FOOTSWITCH_6, 23, 127}
+};
+
 
 typedef struct {
-    gpio_num_t gpio;                 // GPIO pin number
-    bool debounced_state;            // True if pressed (active low), false otherwise
-    uint32_t press_start_tick;       // Tick count when button was pressed
-    uint32_t last_transition_tick;   // Tick count of the last valid state transition
-    volatile bool hold_triggered;    // Hold event triggered flag
-    TimerHandle_t hold_timer;        // Timer for hold detection
-
+    gpio_num_t gpio; // GPIO pin number
+    bool debounced_state; // True if pressed (active low), false otherwise
+    uint32_t press_start_tick; // Tick count when button was pressed
+    uint32_t last_transition_tick; // Tick count of the last valid state transition
+    volatile bool hold_triggered; // Hold event triggered flag
+    TimerHandle_t hold_timer; // Timer for hold detection
 } gpio_state_t;
 
+static gpio_state_t gpio_states[7] = {
+    {.gpio = BOOT_BUTTON},
+    {.gpio = FOOTSWITCH_1},
+    {.gpio = FOOTSWITCH_2},
+    {.gpio = FOOTSWITCH_3},
+    {.gpio = FOOTSWITCH_4},
+    {.gpio = FOOTSWITCH_5},
+    {.gpio = FOOTSWITCH_6},
+};
 
-static gpio_state_t gpio_states[7];
 static QueueHandle_t gpio_evt_queue = NULL;
 
-static void gpio_task_example(void *arg) {
+// Function to send MIDI Control Change message
+void send_midi_cc(uint8_t cc_number, uint8_t cc_value) {
+    uint8_t midi_packet[4];
+    midi_packet[0] = 0x0B; // Cable Number (0) | Code Index Number (0xB for Control Change)
+    midi_packet[1] = 0xB0 | (MIDI_CHANNEL & 0x0F); // Status Byte: 0xB0 (Control Change) | channel number
+    midi_packet[2] = cc_number; // Controller Number
+    midi_packet[3] = cc_value; // Controller Value
+    tud_midi_packet_write(midi_packet);
+}
+
+static void gpio_task_example(void* arg) {
     uint32_t gpio_num;
     while (true) {
         if (!xQueueReceive(gpio_evt_queue, &gpio_num, portMAX_DELAY)) {
@@ -56,16 +94,18 @@ static void gpio_task_example(void *arg) {
             gpio_states[gpio_num].debounced_state,
             gpio_states[gpio_num].last_transition_tick
         );
+
+        send_midi_cc(footswitches_config[gpio_num].cc_number, footswitches_config[gpio_num].cc_value);
     }
 }
 
-static void IRAM_ATTR gpio_isr_handler(void *arg) {
+static void IRAM_ATTR gpio_isr_handler(void* arg) {
     const uint32_t gpio_pin = (uint32_t)arg;
     const TickType_t current_tick = xTaskGetTickCountFromISR();
-    gpio_state_t *state = &gpio_states[gpio_pin];
+    gpio_state_t* state = &gpio_states[gpio_pin];
 
     // Read current level (active low: 0 means pressed)
-    const int level = gpio_get_level(gpio_pin);
+    const int level = gpio_get_level(state->gpio);
     const bool new_state = (level == 0);
 
     // Process only if the state is changing
@@ -106,7 +146,7 @@ esp_err_t initialize_gpio_interrupts() {
         return ESP_FAIL;
     }
 
-    const BaseType_t xReturned = xTaskCreate(gpio_task_example, "gpio_task_example", 2048, NULL, 10, NULL);
+    const BaseType_t xReturned = xTaskCreate(gpio_task_example, "gpio_task_example", 4096, NULL, 1, NULL);
     if (xReturned != pdPASS) {
         // Task creation failed. Log the error and return a custom error code
         ESP_LOGE("xTaskCreate", "Failed to create task. Error code: 0x%X", xReturned);

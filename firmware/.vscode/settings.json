@@ -4,7 +4,7 @@
     "idf.openOcdConfigs": [
         "board/esp32s3-builtin.cfg"
     ],
-    "idf.portWin": "COM4",
+    "idf.portWin": "COM6",
     "idf.toolsPathWin": "C:\\Users\\emman\\.espressif",
     "idf.flashType": "UART",
     "files.associations": {
