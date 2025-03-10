@@ -138,9 +138,20 @@ static void handle_press(uint32_t idx, bool pressed) {
     const footswitch_config_t* cfg = &footswitch_config[idx];
 
     if (pressed) {
+        if (cfg->hold_action == HOLD_ACTION_NONE) {
+            send_layer_midi(idx);
+            return;
+        }
+
         xTimerStart(state->hold_timer, 0);
-        send_layer_midi(idx);
         return;
+    }
+
+    // When the key is released:
+    // If the hold timer did not trigger a hold action, and a hold action is defined,
+    // then consider it a tap and send the press event.
+    if (!state->hold_active && cfg->hold_action != HOLD_ACTION_NONE) {
+        send_layer_midi(idx);
     }
 
     xTimerStop(state->hold_timer, 0);
