@@ -17,14 +17,13 @@
 #include <device/usbd.h>
 #include <tusb_config.h>
 
-#include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include <esp_err.h>
 
 #include "tusb320.h"
-#include "gpio_config.c"
+#include "footswitch_controller.c"
 
-static const char* TAG = "Main";
+#define TAG "main"
 
 /************* I2C ****************/
 #define I2C_MASTER_SCL_IO GPIO_NUM_17
@@ -233,7 +232,7 @@ void app_main() {
     // i2c_master_dev_handle_t dev_handle;
     // i2c_master_init(&bus_handle, &dev_handle);
     // ESP_LOGI(TAG, "I2C initialized successfully");
-    ESP_ERROR_CHECK(configure_gpios());
+    ESP_ERROR_CHECK(initialize_footswitches());
 
     // static int count = 0;
     // while (true) {
