@@ -2,13 +2,44 @@ import serial
 import json
 
 midi_config = {
-    "id": 1,
-    "layers": [
-        {"cc_number": 64, "cc_value": 127},
-        {"cc_number": 65, "cc_value": 0}
-    ],
-    "hold_action": "midi",
-    "midi_cc": {"number": 66, "value": 50}
+    "config": [
+        {
+            "id": 1,
+            "layers": [
+                {"cc_number": 49, "cc_value": 127},
+                {"cc_number": 48, "cc_value": 0}
+            ],
+            "hold_action": "toggle_layer",
+            "target_layer": 1,
+        },
+        {
+            "id": 2,
+            "layers": [
+                {"cc_number": 48, "cc_value": 127},
+                {"cc_number": 48, "cc_value": 0}
+            ],
+            "hold_action": "midi",
+            "midi_cc": {"number": 66, "value": 50}
+        },
+        {
+            "id": 3,
+            "layers": [
+                {"cc_number": 48, "cc_value": 127},
+                {"cc_number": 48, "cc_value": 0}
+            ],
+            "hold_action": "midi",
+            "midi_cc": {"number": 66, "value": 50}
+        },
+        {
+            "id": 4,
+            "layers": [
+                {"cc_number": 48, "cc_value": 127},
+                {"cc_number": 48, "cc_value": 0}
+            ],
+            "hold_action": "midi",
+            "midi_cc": {"number": 66, "value": 50}
+        }
+    ]
 }
 
 # Serialize the dictionary to a JSON string
