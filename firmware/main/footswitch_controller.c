@@ -9,10 +9,10 @@
 
 // Configuration ==============================================================
 #define DEBOUNCE_TIME_MS     1
-#define HOLD_TIME_MS         1000
+#define HOLD_TIME_MS         500
 #define MIDI_CHANNEL         0
 #define MAX_LAYERS           2
-#define NUM_FOOTSWITCHES     (sizeof(footswitch_config)/sizeof(footswitch_config[0]))
+#define NUM_FOOTSWITCHES     7
 #define DEBOUNCE_TICKS       pdMS_TO_TICKS(DEBOUNCE_TIME_MS)
 #define HOLD_EVENT_FLAG      0x80000000
 #define TAG                  "footswitch_controller"
@@ -76,6 +76,46 @@ static footswitch_config_t footswitch_config[] = {
     },
     {
         GPIO_NUM_5, {
+            {57, 65},
+            {57, 127}
+        },
+        HOLD_ACTION_SEND_MIDI,
+        {.midi = {99, 127}}
+    },
+    {
+        GPIO_NUM_5, {
+            {57, 65},
+            {57, 127}
+        },
+        HOLD_ACTION_SEND_MIDI,
+        {.midi = {99, 127}}
+    },
+    {
+        GPIO_NUM_6, {
+            {57, 65},
+            {57, 127}
+        },
+        HOLD_ACTION_SEND_MIDI,
+        {.midi = {99, 127}}
+    },
+    {
+        GPIO_NUM_38, {
+            {57, 65},
+            {57, 127}
+        },
+        HOLD_ACTION_SEND_MIDI,
+        {.midi = {99, 127}}
+    },
+    {
+        GPIO_NUM_47, {
+            {57, 65},
+            {57, 127}
+        },
+        HOLD_ACTION_SEND_MIDI,
+        {.midi = {99, 127}}
+    },
+    {
+        GPIO_NUM_48, {
             {57, 65},
             {57, 127}
         },
@@ -252,163 +292,244 @@ esp_err_t initialize_footswitches(void) {
 
 #define TAG "config_parser"
 
-// Example function to update configuration from JSON string
-void update_config_from_json(const char* json_str) {
+bool update_config_from_json(const char *json_str) {
     jparse_ctx_t jctx;
-    int ret;
-
-    // Start parsing; json_parse_start allocates tokens, etc.
-    ret = json_parse_start(&jctx, json_str, strlen(json_str));
+    int ret = json_parse_start(&jctx, json_str, strlen(json_str));
     if (ret != OS_SUCCESS) {
-        ESP_LOGE(TAG, "Failed to start JSON parsing");
-        return;
+        ESP_LOGE(TAG, "Failed to start JSON parsing: error %d", ret);
+        return false;
     }
 
-    // Get the footswitch "id" from the JSON object
-    int id = 0;
-    ret = json_obj_get_int(&jctx, "id", &id);
-    if (ret != OS_SUCCESS) {
-        ESP_LOGE(TAG, "Missing or invalid 'id'");
+    int config_array_size;
+    if (json_obj_get_array(&jctx, "config", &config_array_size) != OS_SUCCESS) {
+        ESP_LOGE(TAG, "Missing or invalid 'config' array in root object");
         json_parse_end(&jctx);
-        return;
-    }
-    uint32_t idx = id - 1; // convert id (1-based) to zero-index
-    if (idx >= NUM_FOOTSWITCHES) {
-        ESP_LOGE(TAG, "Invalid footswitch id: %d", id);
-        json_parse_end(&jctx);
-        return;
+        return false;
     }
 
-    // Process the "layers" array
-    int num_layers = 0;
-    ret = json_obj_get_array(&jctx, "layers", &num_layers);
-    if (ret == OS_SUCCESS && num_layers > 0) {
-        for (uint32_t i = 0; i < (uint32_t)num_layers && i < MAX_LAYERS; i++) {
-            // Get the object at index i in the layers array
-            ret = json_arr_get_object(&jctx, i);
-            if (ret != OS_SUCCESS) {
-                ESP_LOGE(TAG, "Failed to get layer object at index %d", i);
-                continue;
-            }
-            int cc_number = 0, cc_value = 0;
-            ret = json_obj_get_int(&jctx, "cc_number", &cc_number);
-            if (ret == OS_SUCCESS) {
-                footswitch_config[idx].layers[i].cc_number = cc_number;
-            }
-            ret = json_obj_get_int(&jctx, "cc_value", &cc_value);
-            if (ret == OS_SUCCESS) {
-                footswitch_config[idx].layers[i].cc_value = cc_value;
-            }
-            // Leave the current layer object context
-            json_obj_leave_object(&jctx);
-        }
-        // Leave the layers array context
-        json_obj_leave_array(&jctx);
-    }
-    else {
-        ESP_LOGW(TAG, "No layers array found or empty");
-    }
+    ESP_LOGI(TAG, "Found %d config entries", config_array_size);
 
-    // Get the "hold_action" string
-    char hold_action_str[32] = {0};
-    ret = json_obj_get_string(&jctx, "hold_action", hold_action_str, sizeof(hold_action_str));
-    if (ret == OS_SUCCESS) {
-        if (strcmp(hold_action_str, "midi") == 0) {
-            footswitch_config[idx].hold_action = HOLD_ACTION_SEND_MIDI;
-        }
-        else if (strcmp(hold_action_str, "momentary") == 0) {
-            footswitch_config[idx].hold_action = HOLD_ACTION_MOMENTARY_LAYER;
-        }
-        else if (strcmp(hold_action_str, "toggle") == 0) {
-            footswitch_config[idx].hold_action = HOLD_ACTION_TOGGLE_LAYER;
-        }
-        else {
-            footswitch_config[idx].hold_action = HOLD_ACTION_NONE;
+    for (int i = 0; i < config_array_size; i++) {
+        if (json_arr_get_object(&jctx, i) != OS_SUCCESS) {
+            ESP_LOGE(TAG, "Config entry %d is not a valid object", i);
+            continue;
         }
 
-        // Parse target_layer for layer actions
-        if (footswitch_config[idx].hold_action == HOLD_ACTION_MOMENTARY_LAYER ||
-            footswitch_config[idx].hold_action == HOLD_ACTION_TOGGLE_LAYER) {
-            int target_layer = 0;
-            ret = json_obj_get_int(&jctx, "target_layer", &target_layer);
-            if (ret == OS_SUCCESS) {
-                footswitch_config[idx].hold_config.target_layer = (uint8_t)target_layer;
+        int id;
+        if (json_obj_get_int(&jctx, "id", &id) != OS_SUCCESS) {
+            ESP_LOGE(TAG, "Missing/invalid 'id' in config entry %d", i);
+            json_arr_leave_object(&jctx);
+            continue;
+        }
+
+        int index = id - 1;
+        if (index < 0 || index >= 7) {
+            ESP_LOGE(TAG, "Invalid ID %d in config (must be 1-8)", id);
+            json_arr_leave_object(&jctx);
+            continue;
+        }
+
+        // Parse layers
+        int num_layers;
+        if (json_obj_get_array(&jctx, "layers", &num_layers) != OS_SUCCESS) {
+            ESP_LOGE(TAG, "Config %d (ID %d): Missing/invalid 'layers' array", i, id);
+        } else {
+            if (num_layers > MAX_LAYERS) {
+                ESP_LOGW(TAG, "Config %d (ID %d): Too many layers (%d, max %d)",
+                        i, id, num_layers, MAX_LAYERS);
+            }
+
+            for (int l = 0; l < num_layers && l < MAX_LAYERS; l++) {
+                if (json_arr_get_object(&jctx, l) != OS_SUCCESS) {
+                    ESP_LOGE(TAG, "Config %d (ID %d): Layer %d is not an object", i, id, l);
+                    continue;
+                }
+
+                int cc_num;
+                if (json_obj_get_int(&jctx, "cc_number", &cc_num) != OS_SUCCESS) {
+                    ESP_LOGE(TAG, "Config %d (ID %d) layer %d: Missing/invalid cc_number", i, id, l);
+                } else if (cc_num < 0 || cc_num > 127) {
+                    ESP_LOGE(TAG, "Config %d (ID %d) layer %d: Invalid CC number %d (0-127)",
+                            i, id, l, cc_num);
+                } else {
+                    footswitch_config[index].layers[l].cc_number = (uint8_t)cc_num;
+                }
+
+                int cc_val;
+                if (json_obj_get_int(&jctx, "cc_value", &cc_val) != OS_SUCCESS) {
+                    ESP_LOGE(TAG, "Config %d (ID %d) layer %d: Missing/invalid cc_value", i, id, l);
+                } else if (cc_val < 0 || cc_val > 127) {
+                    ESP_LOGE(TAG, "Config %d (ID %d) layer %d: Invalid CC value %d (0-127)",
+                            i, id, l, cc_val);
+                } else {
+                    footswitch_config[index].layers[l].cc_value = (uint8_t)cc_val;
+                }
+
+                json_arr_leave_object(&jctx); // Leave layer object
+            }
+            json_obj_leave_array(&jctx); // Leave layers array
+        }
+
+        // Parse hold action
+        char hold_action[20] = {0};
+        footswitch_config[index].hold_action = HOLD_ACTION_NONE;
+
+        if (json_obj_get_string(&jctx, "hold_action", hold_action, sizeof(hold_action)) != OS_SUCCESS) {
+            ESP_LOGI(TAG, "Config %d (ID %d): No hold action specified", i, id);
+        } else {
+            if (strcmp(hold_action, "midi") == 0) {
+                footswitch_config[index].hold_action = HOLD_ACTION_SEND_MIDI;
+
+                if (json_obj_get_object(&jctx, "midi_cc") != OS_SUCCESS) {
+                    ESP_LOGE(TAG, "Config %d (ID %d): Missing midi_cc object for MIDI hold action", i, id);
+                } else {
+                    int cc_num;
+                    if (json_obj_get_int(&jctx, "number", &cc_num) != OS_SUCCESS) {
+                        ESP_LOGE(TAG, "Config %d (ID %d): Missing/invalid midi_cc number", i, id);
+                    } else if (cc_num < 0 || cc_num > 127) {
+                        ESP_LOGE(TAG, "Config %d (ID %d): Invalid MIDI CC number %d", i, id, cc_num);
+                    } else {
+                        footswitch_config[index].hold_config.midi.cc_number = (uint8_t)cc_num;
+                    }
+
+                    int cc_val;
+                    if (json_obj_get_int(&jctx, "value", &cc_val) != OS_SUCCESS) {
+                        ESP_LOGE(TAG, "Config %d (ID %d): Missing/invalid midi_cc value", i, id);
+                    } else if (cc_val < 0 || cc_val > 127) {
+                        ESP_LOGE(TAG, "Config %d (ID %d): Invalid MIDI CC value %d", i, id, cc_val);
+                    } else {
+                        footswitch_config[index].hold_config.midi.cc_value = (uint8_t)cc_val;
+                    }
+
+                    json_obj_leave_object(&jctx); // Leave midi_cc object
+                }
+            }
+            else if (strcmp(hold_action, "momentary_layer") == 0) {
+                footswitch_config[index].hold_action = HOLD_ACTION_MOMENTARY_LAYER;
+                int target_layer;
+                if (json_obj_get_int(&jctx, "target_layer", &target_layer) != OS_SUCCESS) {
+                    ESP_LOGE(TAG, "Config %d (ID %d): Missing target_layer for momentary action", i, id);
+                } else if (target_layer < 0 || target_layer >= MAX_LAYERS) {
+                    ESP_LOGE(TAG, "Config %d (ID %d): Invalid target_layer %d", i, id, target_layer);
+                } else {
+                    footswitch_config[index].hold_config.target_layer = (uint8_t)target_layer;
+                }
+            }
+            else if (strcmp(hold_action, "toggle_layer") == 0) {
+                footswitch_config[index].hold_action = HOLD_ACTION_TOGGLE_LAYER;
+                int target_layer;
+                if (json_obj_get_int(&jctx, "target_layer", &target_layer) != OS_SUCCESS) {
+                    ESP_LOGE(TAG, "Config %d (ID %d): Missing target_layer for toggle action", i, id);
+                } else if (target_layer < 0 || target_layer >= MAX_LAYERS) {
+                    ESP_LOGE(TAG, "Config %d (ID %d): Invalid target_layer %d", i, id, target_layer);
+                } else {
+                    footswitch_config[index].hold_config.target_layer = (uint8_t)target_layer;
+                }
             }
             else {
-                ESP_LOGW(TAG, "target_layer not found for layer action");
+                ESP_LOGE(TAG, "Config %d (ID %d): Unknown hold_action '%s'", i, id, hold_action);
             }
         }
-    }
-    else {
-        ESP_LOGW(TAG, "hold_action not found; defaulting to NONE");
-        footswitch_config[idx].hold_action = HOLD_ACTION_NONE;
+
+        json_arr_leave_object(&jctx); // Leave config item object
     }
 
-    // End parsing and free resources
     json_parse_end(&jctx);
-    ESP_LOGI(TAG, "Configuration updated for footswitch %d", id);
+    return true;
 }
 
 
-#define NVS_NAMESPACE "config"
 
-esp_err_t save_config_to_nvs(const char* json_str) {
-    nvs_handle_t nvs_handle;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+#include "nvs_flash.h"
+#include "nvs.h"
+#include <esp_log.h>
+
+static const char *NVS_NAMESPACE = "midi_config";
+static const char *NVS_KEY = "footswitches";
+
+bool save_config_to_nvs(void) {
+    esp_err_t err;
+    nvs_handle_t handle;
+
+    // Initialize NVS
+    err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(err);
+
+    // Open NVS namespace
+    err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error opening NVS handle!");
-        return err;
+        ESP_LOGE(TAG, "Error opening NVS namespace: %s", esp_err_to_name(err));
+        return false;
     }
 
-    // Save the JSON string under the key "footswitch_config".
-    err = nvs_set_str(nvs_handle, "footswitch_config", json_str);
+    // Write entire config array as blob
+    size_t config_size = sizeof(footswitch_config_t) * NUM_FOOTSWITCHES;
+    err = nvs_set_blob(handle, NVS_KEY, footswitch_config, config_size);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error writing config to NVS");
-        nvs_close(nvs_handle);
-        return err;
+        ESP_LOGE(TAG, "Error writing config blob: %s", esp_err_to_name(err));
+        nvs_close(handle);
+        return false;
     }
 
-    err = nvs_commit(nvs_handle);
-    nvs_close(nvs_handle);
-    return err;
+    // Commit changes
+    err = nvs_commit(handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error committing NVS: %s", esp_err_to_name(err));
+        nvs_close(handle);
+        return false;
+    }
+
+    nvs_close(handle);
+    ESP_LOGI(TAG, "Configuration saved to NVS");
+    return true;
 }
 
-void load_config_from_nvs(void) {
-    nvs_handle_t nvs_handle;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error opening NVS handle");
-        return;
-    }
-
+bool load_config_from_nvs(void) {
+    esp_err_t err;
+    nvs_handle_t handle;
     size_t required_size = 0;
-    err = nvs_get_str(nvs_handle, "footswitch_config", NULL, &required_size);
-    if (err == ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGI(TAG, "No saved config found");
-        nvs_close(nvs_handle);
-        return;
+
+    // Initialize NVS
+    err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
     }
-    else if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error reading config size");
-        nvs_close(nvs_handle);
-        return;
+    ESP_ERROR_CHECK(err);
+
+    // Open NVS namespace
+    err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGW(TAG, "No saved configuration found");
+        } else {
+            ESP_LOGE(TAG, "Error opening NVS namespace: %s", esp_err_to_name(err));
+        }
+        return false;
     }
 
-    char* json_str = malloc(required_size);
-    if (!json_str) {
-        ESP_LOGE(TAG, "Failed to allocate memory for config");
-        nvs_close(nvs_handle);
-        return;
+    // Get blob size first
+    err = nvs_get_blob(handle, NVS_KEY, NULL, &required_size);
+    if (err != ESP_OK || required_size != sizeof(footswitch_config_t) * NUM_FOOTSWITCHES) {
+        ESP_LOGE(TAG, "Invalid config size: %d (expected %d)",
+                required_size, sizeof(footswitch_config_t) * NUM_FOOTSWITCHES);
+        nvs_close(handle);
+        return false;
     }
 
-    err = nvs_get_str(nvs_handle, "footswitch_config", json_str, &required_size);
-    if (err == ESP_OK) {
-        update_config_from_json(json_str);
-    }
-    else {
-        ESP_LOGE(TAG, "Error reading config string");
+    // Read blob data
+    err = nvs_get_blob(handle, NVS_KEY, footswitch_config, &required_size);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error reading config blob: %s", esp_err_to_name(err));
+        nvs_close(handle);
+        return false;
     }
 
-    free(json_str);
-    nvs_close(nvs_handle);
+    nvs_close(handle);
+    ESP_LOGI(TAG, "Configuration loaded from NVS");
+    return true;
 }

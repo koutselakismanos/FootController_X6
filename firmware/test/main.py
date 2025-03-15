@@ -9,8 +9,8 @@ midi_config = {
                 {"cc_number": 49, "cc_value": 127},
                 {"cc_number": 48, "cc_value": 0}
             ],
-            "hold_action": "toggle_layer",
-            "target_layer": 1,
+            "hold_action": "midi",
+            "target_layer": {"number": 22, "value": 9},
         },
         {
             "id": 2,

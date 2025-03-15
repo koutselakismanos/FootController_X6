@@ -119,6 +119,7 @@ void tinyusb_cdc_rx_callback(int itf, cdcacm_event_t *event)
         json_buf.buffer[json_buf.head - 1] = 0;
         json_buf.head = json_buf.head - 1;
         update_config_from_json((const char *)json_buf.buffer);
+        save_config_to_nvs();
     }
 
     // esp_err_t ret = tinyusb_cdcacm_read(itf, buf, CONFIG_TINYUSB_CDC_RX_BUFSIZE, &chunk_size);
@@ -228,6 +229,7 @@ void app_main() {
     // i2c_master_dev_handle_t dev_handle;
     // i2c_master_init(&bus_handle, &dev_handle);
     // ESP_LOGI(TAG, "I2C initialized successfully");
+    load_config_from_nvs();
     ESP_ERROR_CHECK(initialize_footswitches());
 
     // static int count = 0;
