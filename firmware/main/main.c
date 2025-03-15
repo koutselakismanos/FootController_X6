@@ -22,7 +22,6 @@
 
 #include "tusb320.h"
 #include "footswitch_controller.c"
-#include "config_controller.c"
 
 #define TAG "main"
 
