@@ -1,16 +1,22 @@
 import serial
 import json
+import time
+import sys
 
 midi_config = {
     "config": [
         {
             "id": 1,
+            "toggle": {
+                "on_value": 127,
+                "off_value": 0
+            },
             "layers": [
-                {"cc_number": 49, "cc_value": 127},
-                {"cc_number": 48, "cc_value": 0}
+                {"cc_number": 57, "cc_value": 126},
+                {"cc_number": 58, "cc_value": 0}
             ],
-            "hold_action": "midi",
-            "target_layer": {"number": 22, "value": 9},
+            "hold_action": "toggle_layer",
+            "target_layer": 1
         },
         {
             "id": 2,
@@ -53,18 +59,34 @@ payload = json_with_end.encode()
 
 # Check the payload size
 payload_size = len(payload)
-print(f"Payload size: {payload_size} bytes: payload: {payload}")
+print(f"Payload size: {payload_size} bytes")
 
-# Initialize the serial connection
-ser = serial.Serial('COM4')
+try:
+    # Initialize the serial connection
+    ser = serial.Serial('COM4', baudrate=9600, timeout=1)
+    print("Serial connection established.")
 
-# Write the payload to the serial port
-ser.write(payload)
+    # Write the payload to the serial port
+    ser.write(payload)
+    print("Payload sent.")
 
-# Read and print responses
-while True:
-    response = ser.readline()
-    print("Response:", response.decode())
+    # Read and print responses
+    try:
+        while True:
+            if ser.in_waiting > 0:
+                response = ser.readline().decode().strip()
+                if response:
+                    print("Response:", response)
+    except KeyboardInterrupt:
+        print("\nProgram interrupted by user. Exiting...")
+        sys.exit(0)
+    except Exception as e:
+        print(f"An error occurred during communication: {e}")
+        sys.exit(1)
+    finally:
+        ser.close()
+        print("Serial connection closed.")
 
-# Close the serial connection
-ser.close()
+except serial.SerialException as e:
+    print(f"Failed to establish serial connection: {e}")
+    sys.exit(1)
