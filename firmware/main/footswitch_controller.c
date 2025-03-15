@@ -6,12 +6,13 @@
 #include "freertos/timers.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "nvs.h"
 
 // Configuration ==============================================================
 #define DEBOUNCE_TIME_MS     1
 #define HOLD_TIME_MS         500
 #define MIDI_CHANNEL         0
-#define MAX_LAYERS           2
+#define MAX_LAYERS           5
 #define NUM_FOOTSWITCHES     7
 #define DEBOUNCE_TICKS       pdMS_TO_TICKS(DEBOUNCE_TIME_MS)
 #define HOLD_EVENT_FLAG      0x80000000
@@ -41,6 +42,13 @@ typedef struct {
             uint8_t cc_number, cc_value;
         } midi;
     } hold_config;
+
+    // Toggle configuration
+    struct {
+        bool enabled;
+        uint8_t on_value;
+        uint8_t off_value;
+    } toggle;
 } footswitch_config_t;
 
 typedef struct {
@@ -49,7 +57,9 @@ typedef struct {
     uint32_t last_tick;
     TimerHandle_t hold_timer;
     bool hold_active;
+    bool toggle_state;
 } footswitch_state_t;
+
 
 typedef struct {
     uint8_t current_layer;
@@ -73,14 +83,6 @@ static footswitch_config_t footswitch_config[] = {
         },
         HOLD_ACTION_MOMENTARY_LAYER,
         {.target_layer = 1}
-    },
-    {
-        GPIO_NUM_5, {
-            {57, 65},
-            {57, 127}
-        },
-        HOLD_ACTION_SEND_MIDI,
-        {.midi = {99, 127}}
     },
     {
         GPIO_NUM_5, {
@@ -179,7 +181,15 @@ static void handle_press(uint32_t idx, bool pressed) {
 
     if (pressed) {
         if (cfg->hold_action == HOLD_ACTION_NONE) {
-            send_layer_midi(idx);
+            if (cfg->toggle.enabled) {
+                // Toggle the state and send MIDI
+                state->toggle_state = !state->toggle_state;
+                uint8_t value = state->toggle_state ? cfg->toggle.on_value : cfg->toggle.off_value;
+                send_midi(cfg->layers[active_layer.current_layer].cc_number, value);
+            }
+            else {
+                send_layer_midi(idx);
+            }
             return;
         }
 
@@ -187,11 +197,16 @@ static void handle_press(uint32_t idx, bool pressed) {
         return;
     }
 
-    // When the key is released:
-    // If the hold timer did not trigger a hold action, and a hold action is defined,
-    // then consider it a tap and send the press event.
+    // Release handling
     if (!state->hold_active && cfg->hold_action != HOLD_ACTION_NONE) {
-        send_layer_midi(idx);
+        if (!cfg->toggle.enabled) {
+            send_layer_midi(idx);
+        }
+        else {
+            state->toggle_state = !state->toggle_state;
+            uint8_t value = state->toggle_state ? cfg->toggle.on_value : cfg->toggle.off_value;
+            send_midi(cfg->layers[active_layer.current_layer].cc_number, value);
+        }
     }
 
     xTimerStop(state->hold_timer, 0);
@@ -201,6 +216,7 @@ static void handle_press(uint32_t idx, bool pressed) {
         switch_layer(0, false);
     }
 }
+
 
 static void process_event(uint32_t event) {
     const bool is_hold = event & HOLD_EVENT_FLAG;
@@ -292,7 +308,7 @@ esp_err_t initialize_footswitches(void) {
 
 #define TAG "config_parser"
 
-bool update_config_from_json(const char *json_str) {
+bool update_config_from_json(const char* json_str) {
     jparse_ctx_t jctx;
     int ret = json_parse_start(&jctx, json_str, strlen(json_str));
     if (ret != OS_SUCCESS) {
@@ -333,10 +349,11 @@ bool update_config_from_json(const char *json_str) {
         int num_layers;
         if (json_obj_get_array(&jctx, "layers", &num_layers) != OS_SUCCESS) {
             ESP_LOGE(TAG, "Config %d (ID %d): Missing/invalid 'layers' array", i, id);
-        } else {
+        }
+        else {
             if (num_layers > MAX_LAYERS) {
                 ESP_LOGW(TAG, "Config %d (ID %d): Too many layers (%d, max %d)",
-                        i, id, num_layers, MAX_LAYERS);
+                         i, id, num_layers, MAX_LAYERS);
             }
 
             for (int l = 0; l < num_layers && l < MAX_LAYERS; l++) {
@@ -348,20 +365,24 @@ bool update_config_from_json(const char *json_str) {
                 int cc_num;
                 if (json_obj_get_int(&jctx, "cc_number", &cc_num) != OS_SUCCESS) {
                     ESP_LOGE(TAG, "Config %d (ID %d) layer %d: Missing/invalid cc_number", i, id, l);
-                } else if (cc_num < 0 || cc_num > 127) {
+                }
+                else if (cc_num < 0 || cc_num > 127) {
                     ESP_LOGE(TAG, "Config %d (ID %d) layer %d: Invalid CC number %d (0-127)",
-                            i, id, l, cc_num);
-                } else {
+                             i, id, l, cc_num);
+                }
+                else {
                     footswitch_config[index].layers[l].cc_number = (uint8_t)cc_num;
                 }
 
                 int cc_val;
                 if (json_obj_get_int(&jctx, "cc_value", &cc_val) != OS_SUCCESS) {
                     ESP_LOGE(TAG, "Config %d (ID %d) layer %d: Missing/invalid cc_value", i, id, l);
-                } else if (cc_val < 0 || cc_val > 127) {
+                }
+                else if (cc_val < 0 || cc_val > 127) {
                     ESP_LOGE(TAG, "Config %d (ID %d) layer %d: Invalid CC value %d (0-127)",
-                            i, id, l, cc_val);
-                } else {
+                             i, id, l, cc_val);
+                }
+                else {
                     footswitch_config[index].layers[l].cc_value = (uint8_t)cc_val;
                 }
 
@@ -376,28 +397,34 @@ bool update_config_from_json(const char *json_str) {
 
         if (json_obj_get_string(&jctx, "hold_action", hold_action, sizeof(hold_action)) != OS_SUCCESS) {
             ESP_LOGI(TAG, "Config %d (ID %d): No hold action specified", i, id);
-        } else {
+        }
+        else {
             if (strcmp(hold_action, "midi") == 0) {
                 footswitch_config[index].hold_action = HOLD_ACTION_SEND_MIDI;
 
                 if (json_obj_get_object(&jctx, "midi_cc") != OS_SUCCESS) {
                     ESP_LOGE(TAG, "Config %d (ID %d): Missing midi_cc object for MIDI hold action", i, id);
-                } else {
+                }
+                else {
                     int cc_num;
                     if (json_obj_get_int(&jctx, "number", &cc_num) != OS_SUCCESS) {
                         ESP_LOGE(TAG, "Config %d (ID %d): Missing/invalid midi_cc number", i, id);
-                    } else if (cc_num < 0 || cc_num > 127) {
+                    }
+                    else if (cc_num < 0 || cc_num > 127) {
                         ESP_LOGE(TAG, "Config %d (ID %d): Invalid MIDI CC number %d", i, id, cc_num);
-                    } else {
+                    }
+                    else {
                         footswitch_config[index].hold_config.midi.cc_number = (uint8_t)cc_num;
                     }
 
                     int cc_val;
                     if (json_obj_get_int(&jctx, "value", &cc_val) != OS_SUCCESS) {
                         ESP_LOGE(TAG, "Config %d (ID %d): Missing/invalid midi_cc value", i, id);
-                    } else if (cc_val < 0 || cc_val > 127) {
+                    }
+                    else if (cc_val < 0 || cc_val > 127) {
                         ESP_LOGE(TAG, "Config %d (ID %d): Invalid MIDI CC value %d", i, id, cc_val);
-                    } else {
+                    }
+                    else {
                         footswitch_config[index].hold_config.midi.cc_value = (uint8_t)cc_val;
                     }
 
@@ -409,9 +436,11 @@ bool update_config_from_json(const char *json_str) {
                 int target_layer;
                 if (json_obj_get_int(&jctx, "target_layer", &target_layer) != OS_SUCCESS) {
                     ESP_LOGE(TAG, "Config %d (ID %d): Missing target_layer for momentary action", i, id);
-                } else if (target_layer < 0 || target_layer >= MAX_LAYERS) {
+                }
+                else if (target_layer < 0 || target_layer >= MAX_LAYERS) {
                     ESP_LOGE(TAG, "Config %d (ID %d): Invalid target_layer %d", i, id, target_layer);
-                } else {
+                }
+                else {
                     footswitch_config[index].hold_config.target_layer = (uint8_t)target_layer;
                 }
             }
@@ -420,9 +449,11 @@ bool update_config_from_json(const char *json_str) {
                 int target_layer;
                 if (json_obj_get_int(&jctx, "target_layer", &target_layer) != OS_SUCCESS) {
                     ESP_LOGE(TAG, "Config %d (ID %d): Missing target_layer for toggle action", i, id);
-                } else if (target_layer < 0 || target_layer >= MAX_LAYERS) {
+                }
+                else if (target_layer < 0 || target_layer >= MAX_LAYERS) {
                     ESP_LOGE(TAG, "Config %d (ID %d): Invalid target_layer %d", i, id, target_layer);
-                } else {
+                }
+                else {
                     footswitch_config[index].hold_config.target_layer = (uint8_t)target_layer;
                 }
             }
@@ -430,6 +461,31 @@ bool update_config_from_json(const char *json_str) {
                 ESP_LOGE(TAG, "Config %d (ID %d): Unknown hold_action '%s'", i, id, hold_action);
             }
         }
+
+        if (json_obj_get_object(&jctx, "toggle") == OS_SUCCESS) {
+            footswitch_config_t* cfg = &footswitch_config[index];
+            cfg->toggle.enabled = true;
+
+            // Parse on/off values
+            int on_val, off_val;
+            if (json_obj_get_int(&jctx, "on_value", &on_val) == OS_SUCCESS && on_val >= 0 && on_val <= 127) {
+                cfg->toggle.on_value = (uint8_t)on_val;
+            }
+            else {
+                ESP_LOGE(TAG, "Invalid toggle on_value for ID %d", id);
+                cfg->toggle.enabled = false;
+            }
+            if (json_obj_get_int(&jctx, "off_value", &off_val) == OS_SUCCESS && off_val >= 0 && off_val <= 127) {
+                cfg->toggle.off_value = (uint8_t)off_val;
+            }
+            else {
+                ESP_LOGE(TAG, "Invalid toggle off_value for ID %d", id);
+                cfg->toggle.enabled = false;
+            }
+
+            json_obj_leave_object(&jctx); // Exit toggle object
+        }
+
 
         json_arr_leave_object(&jctx); // Leave config item object
     }
@@ -439,13 +495,8 @@ bool update_config_from_json(const char *json_str) {
 }
 
 
-
-#include "nvs_flash.h"
-#include "nvs.h"
-#include <esp_log.h>
-
-static const char *NVS_NAMESPACE = "midi_config";
-static const char *NVS_KEY = "footswitches";
+static const char* NVS_NAMESPACE = "midi_config";
+static const char* NVS_KEY = "footswitches";
 
 bool save_config_to_nvs(void) {
     esp_err_t err;
@@ -506,7 +557,8 @@ bool load_config_from_nvs(void) {
     if (err != ESP_OK) {
         if (err == ESP_ERR_NVS_NOT_FOUND) {
             ESP_LOGW(TAG, "No saved configuration found");
-        } else {
+        }
+        else {
             ESP_LOGE(TAG, "Error opening NVS namespace: %s", esp_err_to_name(err));
         }
         return false;
@@ -516,7 +568,7 @@ bool load_config_from_nvs(void) {
     err = nvs_get_blob(handle, NVS_KEY, NULL, &required_size);
     if (err != ESP_OK || required_size != sizeof(footswitch_config_t) * NUM_FOOTSWITCHES) {
         ESP_LOGE(TAG, "Invalid config size: %d (expected %d)",
-                required_size, sizeof(footswitch_config_t) * NUM_FOOTSWITCHES);
+                 required_size, sizeof(footswitch_config_t) * NUM_FOOTSWITCHES);
         nvs_close(handle);
         return false;
     }
