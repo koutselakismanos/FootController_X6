@@ -22,6 +22,7 @@
 
 #include "tusb320.h"
 #include "footswitch_controller.c"
+#include "config_controller.c"
 
 #define TAG "main"
 
@@ -78,85 +79,81 @@ static const uint8_t configuration_descriptor[] = {
     TUD_MIDI_DESCRIPTOR(ITF_NUM_MIDI, 5, EPNUM_MIDI_OUT, EPNUM_MIDI_IN, CFG_TUD_MIDI_EPSIZE),
 };
 
-// void app_main(void)
-// {
-
-//     ESP_LOGI(TAG, "USB initialization");
-
-//     const tinyusb_config_t tusb_cfg = {
-//         .device_descriptor = NULL,
-//         .string_descriptor = string_descriptor,
-//         .string_descriptor_count = sizeof(string_descriptor) / sizeof(string_descriptor[0]),
-//         .external_phy = false,
-//         .configuration_descriptor = configuration_descriptor,
-//     };
-
-//     ESP_ERROR_CHECK(tinyusb_driver_install(&tusb_cfg));
-
-//     ESP_LOGI(TAG, "USB initialization DONE");
-
-//     // Initialize button that will trigger HID reports
-//     const gpio_config_t boot_button_config = {
-//         .pin_bit_mask = BIT64(APP_BUTTON),
-//         .mode = GPIO_MODE_INPUT,
-//         .intr_type = GPIO_INTR_DISABLE,
-//         .pull_up_en = true,
-//         .pull_down_en = false,
-//     };
-//     ESP_ERROR_CHECK(gpio_config(&boot_button_config));
-
-//     static int count = 0;
-//     while (1)
-//     {
-//         if (tud_mounted())
-//         {
-//             ESP_LOGI(TAG, "test, meow, mounted");
-//             if (tud_midi_available())
-//             {
-//                 uint8_t packet[4];
-//                 tud_midi_packet_read(packet);
-//             }
-//             static bool send_hid_data = true;
-//             if (send_hid_data)
-//             {
-//                 uint8_t channel = 1;
-//                 uint8_t packet[4];
-//                 packet[0] = 0xB0;
-//                 packet[1] = packet[0] | channel;
-
-//                 if (count % 2 == 0)
-//                 {
-//                     tud_midi_packet_write((uint8_t[]){0x0B, 0xB0, 0x39, 0x35});
-//                 }
-//                 else
-//                 {
-//                     tud_midi_packet_write((uint8_t[]){0x0B, 0xB0, 0x39, 0x72});
-//                 }
-//                 count++;
-//             }
-//             send_hid_data = !gpio_get_level(APP_BUTTON);
-//         }
-//         vTaskDelay(pdMS_TO_TICKS(100));
-//     }
-// }
 
 // static uint8_t buf[CONFIG_TINYUSB_CDC_RX_BUFSIZE + 1];
 
-// void tinyusb_cdc_rx_callback(int itf, cdcacm_event_t *event)
-// {
-//     size_t rx_size = 0;
-//     esp_err_t ret = tinyusb_cdcacm_read(itf, buf, CONFIG_TINYUSB_CDC_RX_BUFSIZE, &rx_size);
-//     if (ret == ESP_OK)
-//     {
-//         ESP_LOGD(TAG, "Data from channel %d:", itf);
-//         ESP_LOG_BUFFER_HEXDUMP(TAG, buf, rx_size, ESP_LOG_DEBUG);
-//         if (rx_size > 0)
-//         {
-//             // tud_hid_n_report(0, buf[0], &buf[1], rx_size - 1);
-//             printf("moew");
-//         }
-//     }
-// }
+#define JSON_BUFFER_SIZE 2048  // Adjust based on max expected JSON size
+
+typedef struct {
+    char buffer[JSON_BUFFER_SIZE];
+    size_t head;
+    size_t tail;
+} json_ring_buffer_t;
+
+static json_ring_buffer_t json_buf = {0};
+
+void tinyusb_cdc_rx_callback(int itf, cdcacm_event_t *event)
+{
+    ESP_LOGI(TAG, "CALLBACK");
+    uint8_t chunk[CONFIG_TINYUSB_CDC_RX_BUFSIZE];
+
+    size_t chunk_size = 0;
+     // Read chunk from CDC
+    if (tinyusb_cdcacm_read(itf, chunk, sizeof(chunk), &chunk_size) == ESP_OK) {
+        // Append to ring buffer
+        for (size_t i = 0; i < chunk_size; i++) {
+            json_buf.buffer[json_buf.head] = chunk[i];
+            json_buf.head = (json_buf.head + 1) % JSON_BUFFER_SIZE;
+
+            // Prevent overflow
+            if (json_buf.head == json_buf.tail) {
+                json_buf.tail = (json_buf.tail + 1) % JSON_BUFFER_SIZE;
+            }
+        }
+    }
+
+    ESP_LOG_BUFFER_HEXDUMP(TAG, chunk, chunk_size, ESP_LOG_INFO);
+    ESP_LOGI(TAG, "%c", json_buf.buffer[json_buf.head - 1]);
+    if (json_buf.buffer[json_buf.head - 1] == '$') {
+        ESP_LOGI(TAG, "Received a JSON string");
+        json_buf.buffer[json_buf.head - 1] = 0;
+        json_buf.head = json_buf.head - 1;
+        update_config_from_json((const char *)json_buf.buffer);
+    }
+
+    // esp_err_t ret = tinyusb_cdcacm_read(itf, buf, CONFIG_TINYUSB_CDC_RX_BUFSIZE, &chunk_size);
+    // if (ret == ESP_OK)
+    // {
+    //     ESP_LOG_BUFFER_HEXDUMP(TAG, buf, chunk_size, ESP_LOG_INFO);
+    //     ESP_LOGI(TAG, "chunk_size %d", chunk_size);
+    //
+    //     if (chunk_size > 0)
+    //     {
+    //         // Ensure the received data is null-terminated so it can be treated as a string.
+    //         if (chunk_size < CONFIG_TINYUSB_CDC_RX_BUFSIZE)
+    //         {
+    //             buf[chunk_size] = '\0';
+    //         }
+    //         else
+    //         {
+    //             buf[CONFIG_TINYUSB_CDC_RX_BUFSIZE] = '\0';
+    //         }
+    //
+    //         ESP_LOGI(TAG, "Received JSON config: %s", buf);
+    //
+    //         // Update the configuration using the received JSON string.
+    //         update_config_from_json((const char *)buf);
+    //
+    //         // Optionally, save the configuration to NVS so it persists after reset.
+    //         if (save_config_to_nvs((const char *)buf) == ESP_OK) {
+    //             ESP_LOGI(TAG, "Configuration saved to NVS");
+    //         } else {
+    //             ESP_LOGE(TAG, "Failed to save configuration to NVS");
+    //         }
+    //     }
+    // }
+}
+
 
 esp_err_t setup_usb() {
     ESP_LOGI(TAG, "USB Initialization");
@@ -176,15 +173,13 @@ esp_err_t setup_usb() {
     // // Initialize MIDI (example using hypothetical MIDI functions)
     // tusb_midi_init();
 
-    // tinyusb_config_cdcacm_t acm_cfg = {
-    //     .usb_dev = TINYUSB_USBDEV_0,
-    //     .cdc_port = TINYUSB_CDC_ACM_0,
-    //     .rx_unread_buf_sz = 64,
-    //     .callback_rx = &tinyusb_cdc_rx_callback,
-    //     .callback_rx_wanted_char = NULL,
-    // };
+    tinyusb_config_cdcacm_t acm_cfg = {
+        .usb_dev = TINYUSB_USBDEV_0,
+        .cdc_port = TINYUSB_CDC_ACM_0,
+        .callback_rx = &tinyusb_cdc_rx_callback,
+    };
 
-    const tinyusb_config_cdcacm_t acm_cfg = {0};
+    // const tinyusb_config_cdcacm_t acm_cfg = {0};
     ESP_RETURN_ON_ERROR(tusb_cdc_acm_init(&acm_cfg), "setup usb", "tusb_cdc_acm_init");
     ESP_RETURN_ON_ERROR(esp_tusb_init_console(TINYUSB_CDC_ACM_0), "setup usb", "esp_tusb_init_console"); // log to usb;
 
@@ -219,6 +214,7 @@ static void midi_test_sender_task(void* arg) {
         uint8_t packet[4];
         packet[0] = 0xB0;
         packet[1] = packet[0] | channel;
+        ESP_LOGI(TAG, "Sending MIDI notification");
         tud_midi_packet_write((uint8_t[]){0x0B, 0xB0, 0x39, 0x35});
         vTaskDelay(pdMS_TO_TICKS(1000));
     }

@@ -56,15 +56,15 @@ typedef struct {
     bool layer_locked;
 } layer_state_t;
 
-static const footswitch_config_t footswitch_config[] = {
+static footswitch_config_t footswitch_config[] = {
     {
         GPIO_NUM_0,
         {
-            {48, 64},
-            {48, 127}
+            {57, 126},
+            {57, 0}
         },
         HOLD_ACTION_SEND_MIDI,
-        {.midi = {48, 127}}
+        {.midi = {57, 0}}
     },
     {
         GPIO_NUM_4, {
@@ -243,4 +243,172 @@ esp_err_t initialize_footswitches(void) {
     ESP_RETURN_ON_FALSE(task_err == pdPASS, ESP_FAIL, TAG, "Task create failed");
 
     return ESP_OK;
+}
+
+#include <stdio.h>
+#include <string.h>
+#include "json_parser.h"
+#include "nvs_flash.h"
+
+#define TAG "config_parser"
+
+// Example function to update configuration from JSON string
+void update_config_from_json(const char* json_str) {
+    jparse_ctx_t jctx;
+    int ret;
+
+    // Start parsing; json_parse_start allocates tokens, etc.
+    ret = json_parse_start(&jctx, json_str, strlen(json_str));
+    if (ret != OS_SUCCESS) {
+        ESP_LOGE(TAG, "Failed to start JSON parsing");
+        return;
+    }
+
+    // Get the footswitch "id" from the JSON object
+    int id = 0;
+    ret = json_obj_get_int(&jctx, "id", &id);
+    if (ret != OS_SUCCESS) {
+        ESP_LOGE(TAG, "Missing or invalid 'id'");
+        json_parse_end(&jctx);
+        return;
+    }
+    uint32_t idx = id - 1; // convert id (1-based) to zero-index
+    if (idx >= NUM_FOOTSWITCHES) {
+        ESP_LOGE(TAG, "Invalid footswitch id: %d", id);
+        json_parse_end(&jctx);
+        return;
+    }
+
+    // Process the "layers" array
+    int num_layers = 0;
+    ret = json_obj_get_array(&jctx, "layers", &num_layers);
+    if (ret == OS_SUCCESS && num_layers > 0) {
+        for (uint32_t i = 0; i < (uint32_t)num_layers && i < MAX_LAYERS; i++) {
+            // Get the object at index i in the layers array
+            ret = json_arr_get_object(&jctx, i);
+            if (ret != OS_SUCCESS) {
+                ESP_LOGE(TAG, "Failed to get layer object at index %d", i);
+                continue;
+            }
+            int cc_number = 0, cc_value = 0;
+            ret = json_obj_get_int(&jctx, "cc_number", &cc_number);
+            if (ret == OS_SUCCESS) {
+                footswitch_config[idx].layers[i].cc_number = cc_number;
+            }
+            ret = json_obj_get_int(&jctx, "cc_value", &cc_value);
+            if (ret == OS_SUCCESS) {
+                footswitch_config[idx].layers[i].cc_value = cc_value;
+            }
+            // Leave the current layer object context
+            json_obj_leave_object(&jctx);
+        }
+        // Leave the layers array context
+        json_obj_leave_array(&jctx);
+    }
+    else {
+        ESP_LOGW(TAG, "No layers array found or empty");
+    }
+
+    // Get the "hold_action" string
+    char hold_action_str[32] = {0};
+    ret = json_obj_get_string(&jctx, "hold_action", hold_action_str, sizeof(hold_action_str));
+    if (ret == OS_SUCCESS) {
+        if (strcmp(hold_action_str, "midi") == 0) {
+            footswitch_config[idx].hold_action = HOLD_ACTION_SEND_MIDI;
+        }
+        else if (strcmp(hold_action_str, "momentary") == 0) {
+            footswitch_config[idx].hold_action = HOLD_ACTION_MOMENTARY_LAYER;
+        }
+        else if (strcmp(hold_action_str, "toggle") == 0) {
+            footswitch_config[idx].hold_action = HOLD_ACTION_TOGGLE_LAYER;
+        }
+        else {
+            footswitch_config[idx].hold_action = HOLD_ACTION_NONE;
+        }
+
+        // Parse target_layer for layer actions
+        if (footswitch_config[idx].hold_action == HOLD_ACTION_MOMENTARY_LAYER ||
+            footswitch_config[idx].hold_action == HOLD_ACTION_TOGGLE_LAYER) {
+            int target_layer = 0;
+            ret = json_obj_get_int(&jctx, "target_layer", &target_layer);
+            if (ret == OS_SUCCESS) {
+                footswitch_config[idx].hold_config.target_layer = (uint8_t)target_layer;
+            }
+            else {
+                ESP_LOGW(TAG, "target_layer not found for layer action");
+            }
+        }
+    }
+    else {
+        ESP_LOGW(TAG, "hold_action not found; defaulting to NONE");
+        footswitch_config[idx].hold_action = HOLD_ACTION_NONE;
+    }
+
+    // End parsing and free resources
+    json_parse_end(&jctx);
+    ESP_LOGI(TAG, "Configuration updated for footswitch %d", id);
+}
+
+
+#define NVS_NAMESPACE "config"
+
+esp_err_t save_config_to_nvs(const char* json_str) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error opening NVS handle!");
+        return err;
+    }
+
+    // Save the JSON string under the key "footswitch_config".
+    err = nvs_set_str(nvs_handle, "footswitch_config", json_str);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error writing config to NVS");
+        nvs_close(nvs_handle);
+        return err;
+    }
+
+    err = nvs_commit(nvs_handle);
+    nvs_close(nvs_handle);
+    return err;
+}
+
+void load_config_from_nvs(void) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error opening NVS handle");
+        return;
+    }
+
+    size_t required_size = 0;
+    err = nvs_get_str(nvs_handle, "footswitch_config", NULL, &required_size);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGI(TAG, "No saved config found");
+        nvs_close(nvs_handle);
+        return;
+    }
+    else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error reading config size");
+        nvs_close(nvs_handle);
+        return;
+    }
+
+    char* json_str = malloc(required_size);
+    if (!json_str) {
+        ESP_LOGE(TAG, "Failed to allocate memory for config");
+        nvs_close(nvs_handle);
+        return;
+    }
+
+    err = nvs_get_str(nvs_handle, "footswitch_config", json_str, &required_size);
+    if (err == ESP_OK) {
+        update_config_from_json(json_str);
+    }
+    else {
+        ESP_LOGE(TAG, "Error reading config string");
+    }
+
+    free(json_str);
+    nvs_close(nvs_handle);
 }
