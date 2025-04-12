@@ -9,7 +9,7 @@
 #include "nvs.h"
 
 // Configuration ==============================================================
-#define DEBOUNCE_TIME_MS     1
+#define DEBOUNCE_TIME_MS     30
 #define HOLD_TIME_MS         500
 #define MIDI_CHANNEL         0
 #define MAX_LAYERS           5

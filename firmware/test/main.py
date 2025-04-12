@@ -6,7 +6,7 @@ import sys
 midi_config = {
     "config": [
         {
-            "id": 1,
+            "id": 1, # BOOT BUTTON
             "toggle": {
                 "on_value": 127,
                 "off_value": 0
@@ -21,29 +21,64 @@ midi_config = {
         {
             "id": 2,
             "layers": [
-                {"cc_number": 48, "cc_value": 127},
-                {"cc_number": 48, "cc_value": 0}
+                {"cc_number": 24, "cc_value": 127}, # patch back
+                {"cc_number": 63, "cc_value": 0} # looper record
             ],
             "hold_action": "midi",
-            "midi_cc": {"number": 66, "value": 50}
+            "midi_cc": {"number": 25, "value": 0}
         },
         {
             "id": 3,
             "layers": [
-                {"cc_number": 48, "cc_value": 127},
-                {"cc_number": 48, "cc_value": 0}
+                {"cc_number": 25, "cc_value": 127}, # patch forward
+                {"cc_number": 62, "cc_value": 0} # looper on/off
             ],
+            "toggle": {
+                "on_value": 127,
+                "off_value": 0
+            },
             "hold_action": "midi",
-            "midi_cc": {"number": 66, "value": 50}
+            "midi_cc": {"number": 12, "value": 0}
         },
         {
             "id": 4,
             "layers": [
-                {"cc_number": 48, "cc_value": 127},
+                {"cc_number": 13, "cc_value": 127},
                 {"cc_number": 48, "cc_value": 0}
             ],
             "hold_action": "midi",
-            "midi_cc": {"number": 66, "value": 50}
+            "midi_cc": {"number": 13, "value": 0}
+        },
+        {
+            "id": 5,
+            "layers": [
+                {"cc_number": 14, "cc_value": 127},
+                {"cc_number": 48, "cc_value": 0}
+            ],
+            "hold_action": "midi",
+            "midi_cc": {"number": 14, "value": 0}
+        },
+        {
+            "id": 6,
+            "layers": [
+                {"cc_number": 15, "cc_value": 127},
+                {"cc_number": 48, "cc_value": 0}
+            ],
+            "hold_action": "midi",
+            "midi_cc": {"number": 15, "value": 0}
+        },
+        {
+            "id": 7,
+            "layers": [
+                {"cc_number": 57, "cc_value": 0},
+                {"cc_number": 48, "cc_value": 0}
+            ],
+            "toggle": {
+                "on_value": 110,
+                "off_value": 0
+            },
+            "hold_action": "toggle_layer",
+            "target_layer": 1
         }
     ]
 }
