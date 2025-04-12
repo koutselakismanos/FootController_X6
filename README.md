@@ -29,8 +29,6 @@ A customizable 6-switch USB MIDI footswitch controller based on the ESP32 microc
 *   **PCB:** Custom PCB design (See `pcb/` directory. PCB Software TBD, e.g., Eagle, KiCad).
 *   **Enclosure:** Custom 3D printable enclosure (See `enclosure/` directory and `assets/enclosure.png`).
 
-## Firmware
-
 ## Known Issues & Planned Improvements
 
 *   **PCB USB Routing:** The differential pair routing for the USB connection needs optimization for better signal integrity.
