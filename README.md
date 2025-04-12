@@ -36,6 +36,8 @@ A customizable 6-switch USB MIDI footswitch controller based on the ESP32 microc
 *   **TUSB320 Implementation:** The firmware needs to implement I2C communication with the TUSB320 USB-C controller to enable its features (currently planned/inactive).
 *   **Power MUX:** The existing power multiplexer should be replaced with a simpler diode-based solution for power source selection/protection.
 
+## Firmware
+
 *   Based on ESP-IDF (Espressif IoT Development Framework).
 *   Uses the TinyUSB library for USB device implementation.
 *   Handles switch debouncing, layers, hold detection, and MIDI message generation.
